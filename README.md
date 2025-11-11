@@ -105,9 +105,9 @@ Feel free to explore these resources to see the application in action and access
 
 Experience the AI Customer Success Agent in action:
 
-[![Watch the Demo](https://github.com/VivekVSingh28/Customer-Success-Agent-AI/assets/demo-thumbnail.png)](https://drive.google.com/file/d/17BF-0GaaeP0Cy2A3T5eC_vjJkjMnOwFH/view?usp=drive_link)
+[![Watch the Demo]](https://drive.google.com/file/d/17BF-0GaaeP0Cy2A3T5eC_vjJkjMnOwFH/view?usp=drive_link)
 
-> 🔗 Click the image above to watch the full demo video on Google Drive.
+> 🔗 Click above to watch the full demo video on Google Drive.
 
 
 ## ⚙️ Setup Instructions
