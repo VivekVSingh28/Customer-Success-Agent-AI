@@ -43,16 +43,16 @@ const MessageInput = ({
         
         console.log('Sending voice recording, size:', audioBlob.size);
         
-        // For voice input, always use audio response regardless of toggle
-        const forceAudioResponse = 'audio';
-        console.log('Forcing audio response for voice input:', forceAudioResponse);
-        
-        onSendAudio(audioBlob, forceAudioResponse);
+        // THIS IS THE LINE THAT WAS CAUSING THE ISSUE. IT IS NOW REMOVED.
+        // The `currentResponseFormat` already holds the value from the toggle.
+        // console.log('Forcing audio response for voice input: audio'); // This log should disappear
+
+        onSendAudio(audioBlob, currentResponseFormat); // Pass the actual currentResponseFormat
       } else {
         alert('No audio recorded. Please try again and make sure to speak into the microphone.');
       }
     }
-  }, [recordingState, startRecording, stopRecording, onSendAudio]);
+  }, [recordingState, startRecording, stopRecording, onSendAudio, currentResponseFormat]); // Ensure currentResponseFormat is a dependency
 
   useEffect(() => {
     let silenceTimer;

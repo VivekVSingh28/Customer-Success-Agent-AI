@@ -79,34 +79,6 @@ function App() {
     };
   }, []); // Empty dependency array to run only once
 
-  // Add this useEffect to handle audio URL updates
-  useEffect(() => {
-    if (audioBlobUrl) {
-      console.log('Audio blob URL created, updating latest agent message');
-      setMessages(prev => {
-        const updated = [...prev];
-        // Find the last agent message and add audio to it
-        for (let i = updated.length - 1; i >= 0; i--) {
-          if (updated[i].sender === 'Agent' && !updated[i].audioSrc) {
-            updated[i] = { ...updated[i], audioSrc: audioBlobUrl };
-            break;
-          }
-        }
-        return updated;
-      });
-    }
-  }, [audioBlobUrl]);
-
-  // Add this debug useEffect
-  useEffect(() => {
-    console.log('Current state:', {
-      messagesCount: messages.length,
-      isProcessing,
-      audioBlobUrl: audioBlobUrl ? 'present' : 'null',
-      serverAudioChunks: serverAudioChunks.length
-    });
-  }, [messages, isProcessing, audioBlobUrl, serverAudioChunks]);
-
   const handleConnect = () => {
     console.log('WebSocket Connected!');
     setIsConnected(true); // Make sure this is being called
@@ -155,83 +127,38 @@ function App() {
 
   const handleAudioStreamStart = (data) => {
     console.log('Audio stream started:', data);
-    setAudioBlobUrl(null);
-    setServerAudioChunks([]); // Reset chunks for new stream
-    // Don't change isProcessing here - let it stay true
+    setAudioBlobUrl(null); // Clear previous audio URL
+    setServerAudioChunks([]); // Start accumulating new chunks for the current response
+    setProcessingStatus('Receiving audio...'); // This is getting stuck
   };
 
   const handleAudioChunk = (data) => {
+    // Just log for debugging, don't accumulate chunks
     console.log('Audio chunk received, size:', data.chunk_size);
-    // Store the chunk data (base64 encoded) - make sure it's valid base64
-    if (data.chunk_data && typeof data.chunk_data === 'string') {
-      setServerAudioChunks(prev => {
-        const newChunks = [...prev, data.chunk_data];
-        console.log('Total chunks stored:', newChunks.length);
-        return newChunks;
-      });
-    } else {
-      console.warn('Invalid chunk data received:', data);
-    }
+    setServerAudioChunks(prev => [...prev, data.chunk_data]);
   };
 
   const handleAudioStreamComplete = (data) => {
     console.log('Audio stream completed:', data);
     
-    setTimeout(() => {
-      setServerAudioChunks(currentChunks => {
-        console.log('Assembling', currentChunks.length, 'audio chunks');
-        
-        if (currentChunks.length > 0) {
-          try {
-            // Convert each chunk to binary and combine
-            const audioChunks = [];
-            
-            for (const chunk of currentChunks) {
-              try {
-                const binaryString = atob(chunk);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let i = 0; i < binaryString.length; i++) {
-                  bytes[i] = binaryString.charCodeAt(i);
-                }
-                audioChunks.push(bytes);
-              } catch (e) {
-                console.warn('Skipping invalid chunk:', e.message);
-              }
-            }
-            
-            // Calculate total length
-            const totalLength = audioChunks.reduce((sum, chunk) => sum + chunk.length, 0);
-            
-            // Combine all chunks
-            const combinedBytes = new Uint8Array(totalLength);
-            let offset = 0;
-            for (const chunk of audioChunks) {
-              combinedBytes.set(chunk, offset);
-              offset += chunk.length;
-            }
-            
-            // Create audio blob
-            const audioBlob = new Blob([combinedBytes], { type: 'audio/mp3' });
-            const audioUrl = URL.createObjectURL(audioBlob);
-            
-            console.log('Audio blob created from binary chunks, size:', audioBlob.size);
-            setAudioBlobUrl(audioUrl);
-            
-          } catch (error) {
-            console.error('Failed to process audio chunks:', error);
-          }
-        }
-        
-        return currentChunks;
-      });
-    }, 100);
+    // Don't try to process serverAudioChunks here, let conversation_completed handle it
+    setProcessingStatus('Processing response...');
   };
 
   const handleConversationCompleted = (data) => {
     console.log('💬 Received conversation_completed event:', data);
 
-    // Create unique event identifier for deduplication
-    const eventId = `${data.transcribed_text || data.input_text}-${Math.floor(data.processing_time?.total || data.processing_time || 0)}-${data.response_text.substring(0, 50)}`;
+    // --- Debugging for user input text ---
+    console.log('Conversation data received:');
+    console.log('  input_text:', data.input_text);
+    console.log('  transcribed_text:', data.transcribed_text);
+    console.log('  response_text:', data.response_text);
+    // --- End Debugging ---
+
+    // More specific deduplication using multiple fields
+    // Use transcribed_text if available, otherwise input_text
+    const userTextInput = data.transcribed_text || data.input_text || ''; 
+    const eventId = `${userTextInput}-${Math.floor(data.processing_time.total || data.processing_time)}-${data.response_text.substring(0, 50)}`;
     
     if (processedEvents.has(eventId)) {
       console.log('Ignoring duplicate conversation_completed event');
@@ -239,57 +166,47 @@ function App() {
     }
     processedEvents.add(eventId);
 
-    // Clean up old processed events (keep only last 10)
-    if (processedEvents.size > 10) {
-      const eventsArray = Array.from(processedEvents);
-      processedEvents.clear();
-      eventsArray.slice(-5).forEach(event => processedEvents.add(event));
+    const newMessages = [];
+
+    // Add the user's message (transcribed speech or text input)
+    if (userTextInput) {
+      newMessages.push({
+        sender: 'You',
+        text: userTextInput,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      });
     }
 
-    setIsProcessing(false);
-    setProcessingStatus(null);
+    // Add the agent's response
+    const agentMessage = {
+      sender: 'Agent',
+      text: data.response_text,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
 
-    // Handle audio response if present in conversation_completed
-    if (data.audio_data && data.response_format === 'audio') {
-      console.log('Creating audio blob from conversation_completed data');
+    if (data.audio_data) {
       try {
+        // Decode base64 audio data
         const binaryString = atob(data.audio_data);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
-        const audioBlob = new Blob([bytes], { type: 'audio/mp3' });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        setAudioBlobUrl(audioUrl);
-        
-        console.log('Audio blob created from conversation_completed, size:', audioBlob.size);
+        const audioBlob = new Blob([bytes], { type: data.audio_format === 'mp3' ? 'audio/mp3' : 'audio/webm' });
+        agentMessage.audioSrc = URL.createObjectURL(audioBlob);
+        // Set shouldAutoPlay to true when audio data is present
+        agentMessage.shouldAutoPlay = true; 
+        console.log('Audio blob URL created for agent message and autoplay set to true.');
       } catch (error) {
-        console.error('Failed to create audio blob from conversation_completed:', error);
+        console.error('Error creating audio blob for agent message:', error);
       }
     }
 
-    // Add message to chat
-    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    
-    // Add user message (if from voice input)
-    if (data.transcribed_text) {
-      setMessages(prev => [...prev, {
-        sender: 'You',
-        text: data.transcribed_text,
-        time: timestamp,
-        audioSrc: null
-      }]);
-    }
-    
-    // Add agent response
-    const agentMessage = {
-      sender: 'Agent',
-      text: data.response_text,
-      time: timestamp,
-      audioSrc: null // Will be set by useEffect when audioBlobUrl changes
-    };
+    newMessages.push(agentMessage);
 
-    setMessages(prev => [...prev, agentMessage]);
+    setMessages(prevMessages => [...prevMessages, ...newMessages]); // Add both user and agent message
+    setIsProcessing(false);
+    setProcessingStatus(null);
   };
 
 
@@ -316,11 +233,6 @@ function App() {
   const handleSendText = (text, responseFormat) => {
     setIsProcessing(true);
     setProcessingStatus('Sending message...');
-    // Add user message immediately for text input to update UI
-    setMessages((prevMessages) => [
-      ...prevMessages,
-      { sender: 'You', text: text, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
-    ]);
     
     console.log('DEBUG: Sending text with response format:', responseFormat); // Add this debug line
     websocket.current.sendTextInput(text, responseFormat);
